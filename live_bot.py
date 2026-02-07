@@ -71,17 +71,24 @@ def run_live_bot():
                         signal_key = f"{symbol}_{signal_time}"
                         
                         # If this is a new signal we haven't processed yet
-                        if last_processed_time is None or signal_time > last_processed_time: 
-                            # Wait, simple timestamp check isn't enough for multiple symbols.
-                            # We need a dict to track last processed time per symbol.
-                            pass # Logic to be fixed below
-
-                        # Using a dict for tracking is better.
-                        # But for now, let's just print.
-                        
-                        # NOTE: The loop logic needs a state refactor. 
-                        # I will implement a proper state tracking in the next step.
-                        pass
+                        if last_processed_times[symbol] is None or signal_time > last_processed_times[symbol]:
+                            
+                            # Check if signal is FRESH (within last 30 mins)
+                            # This prevents alerting old signals on bot restart
+                            signal_timestamp = pd.to_datetime(signal_time)
+                            if (datetime.now() - signal_timestamp).total_seconds() < 1800: # 30 mins
+                                print(f"\n🔥 NEW {symbol} SIGNAL DETECTED at {signal_time} 🔥")
+                                
+                                # Add Symbol to message
+                                msg = f"Symbol: {symbol}\n" + format_signal_message(last_signal)
+                                print(msg)
+                                send_telegram_message(msg)
+                            else:
+                                print(f"Found signal for {symbol} at {signal_time}, but it's old (stale). Skipping alert.")
+                            
+                            last_processed_times[symbol] = signal_time
+                        else:
+                             pass # Old signal already processed
                 
                 if not signals.empty:
                     # Get the very last signal
