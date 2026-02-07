@@ -8,79 +8,185 @@ import time
 import sys
 from src.config import TICKERS
 
-def get_seconds_to_next_candle(interval_minutes=15, buffer_seconds=10):
+def get_seconds_to_next_candle(interval_minutes=15):
     """
-    Calculate seconds to sleep until the next candle close + buffer.
+    Calculate seconds to sleep until the next candle close.
     """
     now = datetime.now()
-    # Calculate next interval time
     next_minute = (now.minute // interval_minutes + 1) * interval_minutes
     next_run_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=next_minute)
-    
-    # If next_minute is 60, it handles hour rollover automatically via timedelta
-    
-    seconds_to_wait = (next_run_time - now).total_seconds() + buffer_seconds
-    return seconds_to_wait
+    seconds_to_wait = (next_run_time - now).total_seconds()
+    return max(0, seconds_to_wait)
 
 def run_live_bot():
-    print("✨ Starting Lumina 20 Strategy Bot (Candle Close Mode)...")
+    print(f"✨ Starting Lumina 20 Strategy Bot for {TICKERS} (High-Frequency Monitor)...")
     print("Press Ctrl+C to stop.")
     
-    last_processed_time = None
-    buffer_seconds = 10 # Buffer for broker data update
+    # Watchlist: Stores symbols waiting for entry trigger
+    # Structure: { 'SYMBOL': { 'trigger': price, 'type': 'BUY/SELL', 'sl': price, 'tp': price, 'setup_time': timestamp } }
+    watchlist = {}
+    
+    # State tracking for 15m analysis
+    last_analysis_time = 0
+    buffer_seconds = 10 
     
     while True:
         try:
-            # 1. Calculate wait time
-            wait_seconds = get_seconds_to_next_candle(15, buffer_seconds)
-            next_run_str = (datetime.now() + timedelta(seconds=wait_seconds)).strftime('%Y-%m-%d %H:%M:%S')
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Waiting {int(wait_seconds)}s for next candle close... (Next run: {next_run_str})")
+            now_ts = time.time()
+            now_dt = datetime.now()
             
-            time.sleep(wait_seconds)
+            # ------------------------------------------------------------------
+            # PART 1: 15-Minute Analysis (Structure Update)
+            # ------------------------------------------------------------------
+            # Calculate next expected candle close time
+            # We run analysis 10s AFTER the candle closes.
+            # E.g., if now is 10:15:10, we run analysis for the 10:00-10:15 candle.
             
-            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Executing Strategy Check...")
+            # Next candle close logic check
+            # We want to run this exactly once per interval.
+            # Simple approach: Check if (now_minutes % 15 == 0) and seconds < 60? 
+            # Better: Track last_analysis_time.
             
-            # 2. Fetch recent data
-            # End time is current timestamp. 
-            # fetch_candles logic should inherently handle closed candles if we ask for end=now? 
-            # Actually, Delta API 'end' is exclusive usually. 
-            # If we run at 10:15:10, we want data up to 10:15:00.
+            # Align to 15m grid
+            current_interval_start = now_dt.replace(minute=(now_dt.minute // 15) * 15, second=0, microsecond=0)
             
-            end_time = int(datetime.now().timestamp())
-            start_time = int((datetime.now() - timedelta(days=2)).timestamp())
+            # If we haven't analyzed this interval yet, and it's past the buffer time
+            # (e.g., 10:15:10), then run analysis.
+            time_since_boundary = (now_dt - current_interval_start).total_seconds()
             
-            for symbol in TICKERS:
-                # print(f"Checking {symbol}...")
-                df = fetch_candles(symbol, "15m", start=start_time, end=end_time)
+            should_analyze = False
+            if time_since_boundary >= buffer_seconds and time_since_boundary < buffer_seconds + 60:
+                # We are in the "Analysis Window"
+                if last_analysis_time != current_interval_start.timestamp():
+                    should_analyze = True
+                    last_analysis_time = current_interval_start.timestamp()
+            
+            if should_analyze:
+                print(f"\n[{now_dt.strftime('%H:%M:%S')}] 🧠 Running 15m Structure Analysis...")
                 
-                if not df.empty:
-                    # 2. Calculate Indicators
-                    df = calculate_ema(df, period=20)
-                    
-                    # 3. Apply Strategy
-                    df = apply_strategy(df)
-                    
-                    # 4. Check for *NEW* signals
-                    signals = df[df['entry_signal'] != 0]
-                    
-                    if not signals.empty:
-                        last_signal = signals.iloc[-1]
-                        signal_time = last_signal['time']
-                        
-                        # Unique key for tracking: Symbol + Time
-                        signal_key = f"{symbol}_{signal_time}"
-                        
-                        # If this is a new signal we haven't processed yet
-                        if last_processed_times[symbol] is None or signal_time > last_processed_times[symbol]:
+                # Fetch & Analyze History
+                end_time = int(now_dt.timestamp())
+                start_time = int((now_dt - timedelta(days=2)).timestamp())
+                
+                for symbol in TICKERS:
+                    try:
+                        # Clear existing watchlist for this symbol (refreshing state)
+                        if symbol in watchlist:
+                            del watchlist[symbol]
                             
-                            # Check if signal is FRESH (within last 30 mins)
-                            # This prevents alerting old signals on bot restart
-                            signal_timestamp = pd.to_datetime(signal_time)
-                            if (datetime.now() - signal_timestamp).total_seconds() < 1800: # 30 mins
-                                print(f"\n🔥 NEW {symbol} SIGNAL DETECTED at {signal_time} 🔥")
+                        df = fetch_candles(symbol, "15m", start=start_time, end=end_time)
+                        
+                        if not df.empty:
+                            df = calculate_ema(df, period=20)
+                            df = apply_strategy(df)
+                            
+                            # Find the latest "Setup" (Signal = 1/-1) that hasn't been triggered/invalidated
+                            # Logic: iterate backwards or check signal columns?
+                            # apply_strategy marks 'signal' (Setup) and 'entry_signal' (Trigger).
+                            # We want to find a setup where entry_signal hasn't happened yet.
+                            
+                            # Let's verify the last few candles for a setup
+                            recent_df = df.tail(10)
+                            
+                            # Filter for setups (signal != 0)
+                            setups = recent_df[recent_df['signal'] != 0]
+                            if not setups.empty:
+                                last_setup = setups.iloc[-1]
+                                setup_idx = last_setup.name
+                                setup_type = "BUY" if last_setup['signal'] == 1 else "SELL"
                                 
-                                # Add Symbol to message
-                                msg = f"Symbol: {symbol}\n" + format_signal_message(last_signal)
+                                # Check if this setup is still pending
+                                # It's pending if price hasn't crossed trigger OR stop loss since setup
+                                # AND we are not "in trade" (entry_signal generated).
+                                
+                                # Check candles AFTER the setup
+                                # (Note: apply_strategy lookahead might have already marked entry_signal if it happened in history)
+                                # But we want to catch it LIVE if it's happening right NOW or in future.
+                                
+                                # If the DataFrame row for "now" (or future) isn't there, apply_strategy can't see it.
+                                # So we look at the result.
+                                
+                                # Has an entry triggered AFTER this setup?
+                                entries = recent_df.loc[setup_idx+1:][recent_df['entry_signal'] != 0]
+                                
+                                if entries.empty:
+                                    # No entry triggered historically. 
+                                    # Is it invalidated? (SL hit?)
+                                    # Check high/low of candles after setup
+                                    sl_hit = False
+                                    trigger_price = last_setup['trigger_price']
+                                    sl_price = last_setup['stop_loss']
+                                    
+                                    # Verify validity
+                                    # For Buy: Low should not go below SL
+                                    # For Sell: High should not go above SL
+                                    candles_after = recent_df.loc[setup_idx+1:]
+                                    
+                                    for idx, row in candles_after.iterrows():
+                                        if setup_type == "BUY" and row['low'] <= sl_price: sl_hit = True
+                                        if setup_type == "SELL" and row['high'] >= sl_price: sl_hit = True
+                                    
+                                    if not sl_hit:
+                                        # SETUP IS VALID AND PENDING!
+                                        watchlist[symbol] = {
+                                            'trigger': trigger_price,
+                                            'sl': sl_price,
+                                            'type': setup_type,
+                                            'time': last_setup['time']
+                                        }
+                                        print(f"   👀 Watching {symbol} for {setup_type} at {trigger_price}")
+                                    else:
+                                        print(f"   x {symbol} Setup Invalidated (SL Hit).")
+                                else:
+                                    # Entry already happened in history
+                                    # We could alert this if it was very recent (like in the last closed candle)
+                                    # But for High-Freq monitor, we care about future.
+                                    # The "Stale Alert" logic handles closed candle alerts.
+                                    # We can assume the 15m polling handled the "Just Closed" alert.
+                                    pass
+                            else:
+                                pass # No recent setups
+                    except Exception as e:
+                        print(f"   x Error analyzing {symbol}: {e}")
+                
+                print(f"   📋 Active Watchlist: {list(watchlist.keys())}")
+
+
+            # ------------------------------------------------------------------
+            # PART 2: High-Frequency Monitoring (1s Polling)
+            # ------------------------------------------------------------------
+            if watchlist:
+                for symbol in list(watchlist.keys()): # List to allow modification
+                    try:
+                        data = watchlist[symbol]
+                        current_price = get_current_price(symbol)
+                        
+                        if current_price:
+                            triggered = False
+                            
+                            # Check Trigger Condition
+                            if data['type'] == "BUY":
+                                if current_price > data['trigger']:
+                                    triggered = True
+                            elif data['type'] == "SELL":
+                                if current_price < data['trigger']:
+                                    triggered = True
+                                    
+                            if triggered:
+                                print(f"\n🚀 {symbol} TRIGGERED! Price: {current_price} (Trigger: {data['trigger']})")
+                                
+                                # Calculate TP/SL for message
+                                risk = data['trigger'] - data['sl'] if data['type'] == "BUY" else data['sl'] - data['trigger']
+                                target = data['trigger'] + (4*risk) if data['type'] == "BUY" else data['trigger'] - (4*risk)
+                                
+                                msg = (
+                                    f"⚡ INSTANT ALERT: {symbol}\n"
+                                    f"Type: {data['type']}\n"
+                                    f"Entry: {data['trigger']}\n"
+                                    f"Current: {current_price}\n"
+                                    f"SL: {data['sl']}\n"
+                                    f"TP: {target:.2f} (1:4)"
+                                )
                                 print(msg)
                                 send_telegram_message(msg)
                             else:

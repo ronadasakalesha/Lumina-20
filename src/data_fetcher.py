@@ -64,5 +64,17 @@ def get_ticker_info(symbol):
                     return ticker
         return None
     except requests.exceptions.RequestException as e:
+        return None
+    except requests.exceptions.RequestException as e:
         print(f"Error fetching ticker: {e}")
         return None
+
+def get_current_price(symbol):
+    """
+    Get the latest mark price/close price for a symbol efficiently.
+    Using standard /v2/tickers endpoint as it is the standard public endpoint.
+    """
+    ticker = get_ticker_info(symbol)
+    if ticker and 'close' in ticker:
+        return float(ticker['close'])
+    return None
