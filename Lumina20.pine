@@ -1,0 +1,53 @@
+//@version=5
+strategy("Lumina 20 Strategy (Step-by-Step)", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// -------------------------------------------------------------------------
+// Step 0: Basic Setup & Indicators
+// -------------------------------------------------------------------------
+// Define Inputs
+emaLength = input.int(20, "EMA Length")
+rrr = input.float(4.0, "Risk Reward Ratio")
+
+// Calculate EMA
+ema20 = ta.ema(close, emaLength)
+plot(ema20, "20 EMA", color=color.yellow, linewidth=2)
+
+// Helper Variables
+isGreen = close > open
+isRed   = close < open
+
+// -------------------------------------------------------------------------
+// Step 1: Define Breakout Conditions
+// -------------------------------------------------------------------------
+// Buy Breakout: Green Candle crosses UP through EMA (Open < EMA < Close)
+buyBreakout = isGreen and open < ema20 and close > ema20
+
+// Sell Breakout: Red Candle crosses DOWN through EMA (Open > EMA > Close)
+sellBreakout = isRed and open > ema20 and close < ema20
+
+
+// -------------------------------------------------------------------------
+// Step 2: Define Confirmation Conditions
+// -------------------------------------------------------------------------
+// We need to look back at the last 2 bars to see if a breakout happened.
+
+// BUY CONFIRMATION
+// a) Breakout happened 1 or 2 bars ago
+// b) Current candle is RED
+// c) Current candle Closes ABOVE EMA
+// d) We define the Trigger Price (High) and SL (Low)
+
+// SELL CONFIRMATION
+// a) Breakout happened 1 or 2 bars ago
+// b) Current candle is GREEN
+// c) Current candle Closes BELOW EMA
+// d) We define the Trigger Price (Low) and SL (High)
+
+
+// -------------------------------------------------------------------------
+// Step 3: Execution Logic (Entry, SL, TP)
+// -------------------------------------------------------------------------
+// If Confirmed -> Place Pending Orders
+// If Trigger Hit -> Enter Trade
+// If SL Hit -> Exit Trade
+// If TP Hit -> Exit Trade
