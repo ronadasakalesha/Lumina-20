@@ -6,6 +6,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 import sys
+from src.config import TICKERS
 
 def get_seconds_to_next_candle(interval_minutes=15, buffer_seconds=10):
     """
@@ -48,53 +49,39 @@ def run_live_bot():
             end_time = int(datetime.now().timestamp())
             start_time = int((datetime.now() - timedelta(days=2)).timestamp())
             
-            df = fetch_candles("BTCUSD", "15m", start=start_time, end=end_time)
-            
-            if not df.empty:
-                # 2. Calculate Indicators
-                df = calculate_ema(df, period=20)
+            for symbol in TICKERS:
+                # print(f"Checking {symbol}...")
+                df = fetch_candles(symbol, "15m", start=start_time, end=end_time)
                 
-                # 3. Apply Strategy
-                # IMPORTANT: ensure we are NOT using the running candle. 
-                # If the API returns the open/running candle as the last row, we must exclude it.
-                # A simple check is comparing the candle time to 'now'. 
-                # For 15m candle at 10:00, it closes at 10:15.
-                # If we are at 10:15:10, the 10:00 candle is closed. The 10:15 candle is running.
-                
-                # Check last row time
-                last_row_time = df.iloc[-1]['time']
-                # If last row time is the *current* interval start (e.g. 10:15 when now is 10:15:10), it's running.
-                # We want the candle before that (10:00).
-                
-                # Let's see... Delta returns time as Start of candle.
-                # If we are at 10:15:10. 
-                # Open candle is 10:15. Closed candle is 10:00.
-                
-                # Logic: If df.iloc[-1]['time'] is within 15 mins of now, it's likely the running candle.
-                current_candle_start = pd.Timestamp.now(tz='UTC').floor('15min') 
-                # Note: pd.to_datetime in fetcher might be UTC or local? 
-                # Fetcher uses: df['time'] = pd.to_datetime(df['time'], unit='s') -> This is UTC usually.
-                
-                # Safest bet: Drop the last row if it matches the current partial interval?
-                # Actually, strategy checks 'entry_signal' on confirmation.
-                # Let's just process df.apply_strategy handles logic.
-                
-                df = apply_strategy(df)
-                
-                # 4. Check for *NEW* signals on the *Completed* candles.
-                # The strategy might mark a signal on the running candle if we feed it? 
-                # We should strictly look at candles that are DEFINITELY closed.
-                # Usually that is everything except the very last one returned if it's the current opened one.
-                
-                # Prune the dataframe to remove potentially running candle
-                # If the last candle start time is > now - 15min, it's the running one.
-                # Actually simpler: We are running at 10:15:10.
-                # We strictly want to verify the candle at 10:00:00.
-                
-                # Let's look at the last 2-3 rows to be safe and find signals.
-                
-                # Filter for signals
-                signals = df[df['entry_signal'] != 0]
+                if not df.empty:
+                    # 2. Calculate Indicators
+                    df = calculate_ema(df, period=20)
+                    
+                    # 3. Apply Strategy
+                    df = apply_strategy(df)
+                    
+                    # 4. Check for *NEW* signals
+                    signals = df[df['entry_signal'] != 0]
+                    
+                    if not signals.empty:
+                        last_signal = signals.iloc[-1]
+                        signal_time = last_signal['time']
+                        
+                        # Unique key for tracking: Symbol + Time
+                        signal_key = f"{symbol}_{signal_time}"
+                        
+                        # If this is a new signal we haven't processed yet
+                        if last_processed_time is None or signal_time > last_processed_time: 
+                            # Wait, simple timestamp check isn't enough for multiple symbols.
+                            # We need a dict to track last processed time per symbol.
+                            pass # Logic to be fixed below
+
+                        # Using a dict for tracking is better.
+                        # But for now, let's just print.
+                        
+                        # NOTE: The loop logic needs a state refactor. 
+                        # I will implement a proper state tracking in the next step.
+                        pass
                 
                 if not signals.empty:
                     # Get the very last signal
