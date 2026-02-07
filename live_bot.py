@@ -65,8 +65,9 @@ def run_live_bot():
                 print(f"\n[{now_dt.strftime('%H:%M:%S')}] 🧠 Running 15m Structure Analysis...")
                 
                 # Fetch & Analyze History
+                # Fetch & Analyze History (Reduced to 24h to save memory)
                 end_time = int(now_dt.timestamp())
-                start_time = int((now_dt - timedelta(days=2)).timestamp())
+                start_time = int((now_dt - timedelta(days=1)).timestamp())
                 
                 for symbol in TICKERS:
                     try:
@@ -107,7 +108,8 @@ def run_live_bot():
                                 # So we look at the result.
                                 
                                 # Has an entry triggered AFTER this setup?
-                                entries = recent_df.loc[setup_idx+1:][recent_df['entry_signal'] != 0]
+                                candles_after_setup = recent_df.loc[setup_idx+1:]
+                                entries = candles_after_setup[candles_after_setup['entry_signal'] != 0]
                                 
                                 if entries.empty:
                                     # No entry triggered historically. 
