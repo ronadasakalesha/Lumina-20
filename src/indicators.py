@@ -1,5 +1,5 @@
 import pandas as pd
-import pandas_ta as ta
+
 
 def calculate_ema(df, period=20):
     """
@@ -15,8 +15,8 @@ def calculate_ema(df, period=20):
     if df.empty:
         return df
     
-    # Calculate EMA using pandas_ta
-    # This adds a column named like 'EMA_20'
-    df.ta.ema(length=period, append=True)
+    # Calculate EMA using native pandas
+    # span=period corresponds to the standard EMA calculation
+    df[f'EMA_{period}'] = df['close'].ewm(span=period, adjust=False).mean()
     
     return df
