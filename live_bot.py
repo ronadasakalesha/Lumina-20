@@ -194,36 +194,10 @@ def run_live_bot():
                             
                             last_processed_times[symbol] = signal_time
                         else:
-                             pass # Old signal already processed
-                
-                if not signals.empty:
-                    # Get the very last signal
-                    last_signal = signals.iloc[-1]
-                    signal_time = last_signal['time']
-                    
-                    # If this is a new signal we haven't processed yet
-                    if last_processed_time is None or signal_time > last_processed_time:
-                        
-                        # Double Check: Is this signal from a CLOSED candle?
-                        # Signal time (candle start) + 15m should be <= Now
-                        # logic: 10:00 candle closes at 10:15. It is safe to alert at 10:15:10.
-                        
-                        # print(f"Signal Time: {signal_time} | Now: {datetime.now()}")
-                        
-                        print(f"\n🔥 NEW SIGNAL DETECTED at {signal_time} 🔥")
-                        msg = format_signal_message(last_signal)
-                        print(msg)
-                        
-                        # Send Alert
-                        send_telegram_message(msg)
-                        
-                        last_processed_time = signal_time
-                    else:
-                        print(f"No new signals. (Last: {last_processed_time})")
-                else:
-                     print(f"No signals found.")
-            else:
-                print("Error fetching data.")
+                            pass
+                            
+                    except Exception as e:
+                        print(f"Error watching {symbol}: {e}")
             
         except KeyboardInterrupt:
             print("\nStopping bot...")
